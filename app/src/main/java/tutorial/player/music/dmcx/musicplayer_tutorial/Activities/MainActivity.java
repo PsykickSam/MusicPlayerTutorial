@@ -11,32 +11,33 @@ import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Handler;
 import android.os.IBinder;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ListView;
-import android.widget.MediaController;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-
 import tutorial.player.music.dmcx.musicplayer_tutorial.Adapter.SongAdapter;
 import tutorial.player.music.dmcx.musicplayer_tutorial.Models.Song;
-import tutorial.player.music.dmcx.musicplayer_tutorial.Player.MusicControl;
-import tutorial.player.music.dmcx.musicplayer_tutorial.Player.MusicController;
 import tutorial.player.music.dmcx.musicplayer_tutorial.R;
 import tutorial.player.music.dmcx.musicplayer_tutorial.Services.MusicService;
 import tutorial.player.music.dmcx.musicplayer_tutorial.Utility.AppAlertDialog;
+import tutorial.player.music.dmcx.musicplayer_tutorial.Utility.Utils;
 import tutorial.player.music.dmcx.musicplayer_tutorial.Variables.Vars;
 
 public class MainActivity extends AppCompatActivity {
@@ -45,50 +46,51 @@ public class MainActivity extends AppCompatActivity {
     public static MainActivity instance;
 
     private static final int REQUEST_CODE_READ_EXTERNAL_STORAGE = 1234;
+    private static final int minSizeOfSong = 1000000;
 
     private ArrayList<Song> songs;
 
     private ListView songsLV;
-    private TextView songTitleTV;
-    private Button playPauseBTN;
+    private TextView songTitleTV, songArtistTV, updateTimeTV, endingTimeTV;
+    private Button playPauseBTN, prevBTN, nextBTN;
+    private SeekBar musicSeekbar;
 
     private SongAdapter songAdapter;
-    private MusicControl mMusicControl;
-    private MusicController mMusicController;
     private MusicService mMusicService;
     private Intent playIntent;
-    private boolean musicBound = false;
+    private Handler seekHandler;
+    private Runnable seekRunnable;
+    private String currentSongTag;
+
+    private int setSeekBarCurrentPosition;
+    private boolean isUserSeeking = false;
     // Variables
+
+    // Static methods
+    public static void staticPlayNext() {
+        instance.playNext();
+    }
+    // Static methods
 
     // Methods
     private void init() {
         songsLV = findViewById(R.id.songsLV);
         songTitleTV = findViewById(R.id.songTitleTV);
         playPauseBTN = findViewById(R.id.playPauseBTN);
+        songArtistTV = findViewById(R.id.songArtistTV);
+        prevBTN = findViewById(R.id.prevBTN);
+        nextBTN = findViewById(R.id.nextBTN);
+        musicSeekbar = findViewById(R.id.musicSeekbar);
+        updateTimeTV = findViewById(R.id.updateTimeTV);
+        endingTimeTV = findViewById(R.id.endingTimeTV);
 
         songs = new ArrayList<>();
-
-        mMusicControl = new MusicControl(mMusicService, musicBound);
-        mMusicController = new MusicController(instance);
-        mMusicController.setMediaPlayer(mMusicControl);
-        mMusicController.setAnchorView(findViewById(R.id.songsLV));
-        mMusicController.setEnabled(true);
+        seekHandler = new Handler();
+        currentSongTag = "";
     }
 
     private void props() {
         loadSongs();
-
-        mMusicController.setPrevNextListeners(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                // Play next
-            }
-        }, new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                // Play prev
-            }
-        });
 
         playPauseBTN.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -100,6 +102,41 @@ public class MainActivity extends AppCompatActivity {
                     mMusicService.start();
                     playPauseBTN.setBackground(getResources().getDrawable(R.drawable.pause_black, null));
                 }
+            }
+        });
+
+        prevBTN.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                playPrev();
+            }
+        });
+
+        nextBTN.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                playNext();
+            }
+        });
+
+        musicSeekbar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int i, boolean b) {
+                setSeekBarCurrentPosition = i;
+                updateTimeTV.setText(Utils.getTimeString((long) setSeekBarCurrentPosition));
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                isUserSeeking = true;
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                isUserSeeking = false;
+                mMusicService.seek(setSeekBarCurrentPosition);
+                updateTimeTV.setText(Utils.getTimeString((long) setSeekBarCurrentPosition));
+                updateSongPosition();
             }
         });
     }
@@ -118,8 +155,11 @@ public class MainActivity extends AppCompatActivity {
     //
     private void getSongList() {
         // Retrive song info
-
         if (checkPermission()) {
+            if (songs != null) {
+                songs.clear();
+            }
+
             ContentResolver musicResolver = getContentResolver();
             Uri musicUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
             @SuppressLint("Recycle")
@@ -133,7 +173,10 @@ public class MainActivity extends AppCompatActivity {
                     long thisId = cursor.getLong(idCol);
                     String thisTitle = cursor.getString(titleCol);
                     String thisArtist = cursor.getString(artistCol);
-                    songs.add(new Song(thisId, thisTitle, thisArtist));
+                    long size = cursor.getLong(cursor.getColumnIndex(OpenableColumns.SIZE));
+                    if (size > minSizeOfSong) {
+                        songs.add(new Song(thisId, thisTitle, thisArtist, ""));
+                    }
                 } while (cursor.moveToNext());
 
                 Collections.sort(songs, new Comparator<Song>() {
@@ -160,11 +203,43 @@ public class MainActivity extends AppCompatActivity {
     * Song picked
     * */
     public void songPicked(View view){
-        mMusicService.setSong(Integer.parseInt(view.getTag().toString()));
-        mMusicService.playSong();
+        if (!currentSongTag.equals(view.getTag().toString())) {
+            currentSongTag = view.getTag().toString();
+            mMusicService.setSong(Integer.parseInt(currentSongTag));
+            mMusicService.playSong();
+            destroySeekbarRunnable();
 
+            setupSongInfo();
+        }
+    }
+
+    /*
+    * Set up song info
+    * */
+    private void setupSongInfo() {
         songTitleTV.setText(mMusicService.getSongTitle());
+        songArtistTV.setText(mMusicService.getSongArtist());
         playPauseBTN.setBackground(getResources().getDrawable(R.drawable.pause_black, null));
+
+        prepareSongPlayback();
+    }
+
+    /*
+    * Get durations
+    * */
+    private void prepareSongPlayback() {
+        musicSeekbar.setProgress(0);
+        updateTimeTV.setText(R.string.zoro_secs);
+        endingTimeTV.setText(R.string.buffuring);
+
+        new Handler().postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                endingTimeTV.setText(Utils.getTimeString((long) mMusicService.getDuration()));
+                musicSeekbar.setMax(mMusicService.getDuration());
+                updateSongPosition();
+            }
+        }, 300);
     }
 
     /*
@@ -172,7 +247,8 @@ public class MainActivity extends AppCompatActivity {
     * */
     private void playNext() {
         mMusicService.playNext();
-        mMusicController.show(0);
+        songTitleTV.setText(mMusicService.getSongTitle());
+        setupSongInfo();
     }
 
     /*
@@ -180,8 +256,43 @@ public class MainActivity extends AppCompatActivity {
      * */
     private void playPrev() {
         mMusicService.playPrev();
-        mMusicController.show(0);
+        songTitleTV.setText(mMusicService.getSongTitle());
+        setupSongInfo();
     }
+
+    /*
+    * Update song position
+    * */
+    private void updateSongPosition() {
+        seekHandler.postDelayed(setSeekbarRunnable(), 1000);
+    }
+
+    /*
+    * RUNNABLE: SEEKBAR
+    * */
+    private Runnable setSeekbarRunnable() {
+        seekRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (!isUserSeeking) {
+                    final int getCurrentPostision = mMusicService.getSongCurrentPosition();
+                    musicSeekbar.setProgress(getCurrentPostision);
+                    updateTimeTV.setText(Utils.getTimeString(getCurrentPostision));
+                    seekHandler.postDelayed(this, 1000);
+                }
+            }
+        };
+
+        return seekRunnable;
+    }
+    private void destroySeekbarRunnable() {
+        try {
+            seekHandler.removeCallbacks(seekRunnable);
+        } catch (Exception ex) {
+            Log.d(Vars.APPTAG, "destroySeekbarRunnable: :SONG HAS NO RUNNABLE: " + ex.getMessage());
+        }
+    }
+
     // Methods
 
     @Override
@@ -206,13 +317,10 @@ public class MainActivity extends AppCompatActivity {
             mMusicService = binder.getService();
             //pass list
             mMusicService.setList(songs);
-            musicBound = true;
         }
 
         @Override
-        public void onServiceDisconnected(ComponentName name) {
-            musicBound = false;
-        }
+        public void onServiceDisconnected(ComponentName name) {}
     };
 
     @Override

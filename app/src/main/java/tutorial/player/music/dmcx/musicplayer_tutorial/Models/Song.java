@@ -5,11 +5,13 @@ public class Song {
     private long id;
     private String title;
     private String artist;
+    private String albamId;
 
-    public Song(long id, String title, String artist) {
+    public Song(long id, String title, String artist, String albamId) {
         this.id = id;
         this.title = title;
         this.artist = artist;
+        this.albamId = albamId;
     }
 
     public long getId() {

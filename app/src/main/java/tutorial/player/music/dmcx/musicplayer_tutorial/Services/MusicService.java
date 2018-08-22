@@ -13,10 +13,11 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.support.annotation.Nullable;
-import android.support.v4.app.NotificationBuilderWithBuilderAccessor;
 import android.util.Log;
+import android.widget.Toast;
 
 import java.util.ArrayList;
+import java.util.Random;
 
 import tutorial.player.music.dmcx.musicplayer_tutorial.Activities.MainActivity;
 import tutorial.player.music.dmcx.musicplayer_tutorial.Models.Song;
@@ -40,7 +41,9 @@ public class MusicService extends Service
     private MediaPlayer player;
     private ArrayList<Song> songs;
     private int songPosition;
-    private String songTitle;
+    private String songTitle, songArtist;
+    private boolean suffle = false;
+    private Random rand;
 
     private final IBinder binder = new MusicBinder();
     // Variables
@@ -62,19 +65,19 @@ public class MusicService extends Service
     * Play song
     * */
     public void playSong() {
-        player.reset();
-        Song playSong = songs.get(songPosition);
-        songTitle = playSong.getTitle();
-        long currentSong = playSong.getId();
-        Uri trackUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, currentSong);
-
         try {
+            Song playSong = songs.get(songPosition);
+            player.reset();
+            songTitle = playSong.getTitle();
+            songArtist = playSong.getArtist();
+            long currentSong = playSong.getId();
+            Uri trackUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, currentSong);
             player.setDataSource(getApplicationContext(), trackUri);
+            player.prepareAsync();
         } catch (Exception ex) {
+            Toast.makeText(getApplicationContext(), "Can't play the music.", Toast.LENGTH_SHORT).show();
             Log.e("MUSIC SERVICE", "Error setting data source", ex);
         }
-
-        player.prepareAsync();
     }
 
     /*
@@ -88,7 +91,7 @@ public class MusicService extends Service
     * Position
     * return: Song position
     * */
-    public int getSongPosition() {
+    public int getSongCurrentPosition() {
         return player.getCurrentPosition();
     }
 
@@ -162,6 +165,22 @@ public class MusicService extends Service
     public String getSongTitle() {
         return songTitle;
     }
+
+    /*
+    * Artist
+    * return: song artist
+    * */
+    public String getSongArtist() {
+        return songArtist;
+    }
+
+    /*
+    * Suffle
+    * return: void
+    * */
+    public void setSuffle() {
+        suffle = !suffle;
+    }
     // Methods
 
     @Nullable
@@ -186,13 +205,15 @@ public class MusicService extends Service
         super.onCreate();
         songPosition = 0;
         player = new MediaPlayer();
+        rand = new Random();
 
         initMusicPlayer();
     }
 
     @Override
     public void onCompletion(MediaPlayer mediaPlayer) {
-
+        stopSelf();
+        MainActivity.staticPlayNext();
     }
 
     @Override
